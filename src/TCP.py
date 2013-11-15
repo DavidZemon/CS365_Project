@@ -9,6 +9,7 @@
 @description:
 """
 
+import logging
 from sys import stderr
 from struct import unpack, pack
 from time import time
@@ -19,7 +20,7 @@ __author__ = 'david'
 
 MAX_PACKET_SEND_ATTEMPTS = 5
 DEFAULT_SOCKET_TIMEOUT = 10  # Timeout for blocking socket calls (in seconds)
-SIMPLE_PACKET_BUFFER = 20  # Bytes required to receive a simple TCP packet (header only)
+SIMPLE_PACKET_BUFFER = 2048  # Bytes required to receive a simple TCP packet (header only); Default = 20
 
 
 class TCP(object):
@@ -41,6 +42,8 @@ class TCP(object):
         if attempt == MAX_PACKET_SEND_ATTEMPTS:
             raise Exception("TcpClient.sendPacket() error: server response error")
 
+        logging.getLogger(__name__).debug("TCP.sendPacket(): Attempt #" + str(attempt))
+
         self.udpClient.sendto(self.dstAddress, packet.encode())
 
         if getResponse:
@@ -51,7 +54,9 @@ class TCP(object):
                 self.udpClient.socket.settimeout(
                     self.timeout + startTime - time())  # Update timeout to be 20 seconds after
                 # TODO: Confirm that SIMPLE_PACKET_BUFFER bytes is enough; Is it worth adding wiggle room?
+                logging.getLogger(__name__).debug("TCP.sendPacket(): Waiting on ACK from " + str(self.dstAddress))
                 packet, recvAddress = self.udpClient.recvfrom(SIMPLE_PACKET_BUFFER)
+                logging.getLogger(__name__).debug("TCP.sendPacket(): Received packet from " + str(recvAddress))
 
             # Receive a packet
             response = TcpGram.decode(packet)
@@ -93,6 +98,7 @@ class TcpClient(TCP):
             ackNum = 0  # Value is ignored in first TCP packet
             packet.create(self.srcPort, self.dstPort, seqNum, ackNum)
             packet.setFlags(["syn"])
+            logging.getLogger(__name__).debug("TcpClient.connect(): Sending SYN packet")
             response = self.sendPacket(packet)
 
             # If server responded with RST flag, DIE!!!
@@ -123,13 +129,20 @@ class TcpServer(TCP):
         """
 
         # Wait for the first TCP gram and decode it
+        self.udpClient.socket.setblocking(1)  # Ensure no timeout occurs while waiting for a client connection
+        logging.getLogger(__name__).debug("TcpServer.recvConnection(): Waiting on connection...")
         packet, clientAddress = self.udpClient.recvfrom(SIMPLE_PACKET_BUFFER)
+        logging.getLogger(__name__).debug("TcpServer.recvConnection(): Packet received!!! I feel loved!")
         packet = TcpGram.decode(packet)
 
         # If gram wasn't a valid handshake initializer, start over
         if ["syn"] != packet.getFlags():
+            logging.getLogger(__name__).info(
+                'TcpServer.recvConnection(): Expecting flags == ["syn"], received ' + str(packet.getFlags()))
             self.recvConnection()
         else:
+            logging.getLogger(__name__).debug("TcpServer.recvConnection(): Handshake part 1 complete! Proceeding to "
+                                              "send SYN-ACK")
             # Handshake initializer was valid, lets read the packet...
             self.dstAddress = clientAddress
             self.dstPort = packet.header["srcPort"]
@@ -144,10 +157,14 @@ class TcpServer(TCP):
 
             # If the three-way connection failed (any flags set other than ACK), send a RST packet
             if ["ack"] != response.getFlags():
+                logging.getLogger(__name__).info(
+                    'TcpServer.recvConnection(): Expecting flags == ["ack"], received ' + str(response.getFlags()))
                 packet = TcpGram()
                 packet.create(self.srcPort, self.dstPort, seqNum, ackNum)
                 packet.setFlags(["rst"])
-                self.sendPacket(packet.encode())  # TODO: Verify that RST packet requests an ACK response
+                self.sendPacket(packet.encode(), getResponse=False)
+
+            logging.getLogger(__name__).debug("TcpServer.recvConnection(): Connection established!")
 
 
 class TcpGram(object):
@@ -156,15 +173,15 @@ class TcpGram(object):
     """
 
     def __init__(self):
-        self.mandatorySections = ["srcPort", "dstPort", "seqNum", "ackNum", "length", "flags", "winSize", "checksum",
-                                  "urg"]
-        self.binaryOnlyValues = ["flags", "checksum"]
-        self.flags = {"cwr": b'\x80', "ece": b'\x40', "urg": b'\x20', "ack": b'\x10', "psh": b'\x08', "rst": b'\x04',
+        self.MANDATORY_SECTIONS = ["srcPort", "dstPort", "seqNum", "ackNum", "length", "flags", "winSize", "checksum",
+                                   "urg"]
+        self.BINARY_ONLY_VALUES = ["flags", "checksum"]
+        self.FLAGS = {"cwr": b'\x80', "ece": b'\x40', "urg": b'\x20', "ack": b'\x10', "psh": b'\x08', "rst": b'\x04',
                       "syn": b'\x02', "fin": b'\x01'}
+        self.LENGTH = 5  # Default TCP header length is 5 (measured in 32-bit words)
         self.memMap = {"srcPort": [2, 0], "dstPort": [2, 2], "seqNum": [4, 4], "ackNum": [4, 8], "length": [1, 12],
                        "flags": [1, 13], "winSize": [2, 14], "checksum": [2, 16], "urg": [2, 18]}
-        self.length = 5  # Default TCP header length is 5 (measured in 32-bit words)
-        self.encodedData = bytes(0)
+        self.data = bytes(0)  # Bytes of data only (does not include header!)
         self.header = {}
 
     def create(self, srcPort, dstPort, seqNum, ackNum):
@@ -178,18 +195,19 @@ class TcpGram(object):
 
         self.header = {"srcPort": srcPort.to_bytes(2, "big"), "dstPort": dstPort.to_bytes(2, "big"),
                        "seqNum": seqNum.to_bytes(4, "big"), "ackNum": ackNum.to_bytes(4, "big"),
-                       "length": TcpGram.encodeLength(self.length), "flags": b'\x00', "winSize": b'\x00\x01',
+                       "length": TcpGram.encodeLength(self.LENGTH), "flags": b'\x00', "winSize": b'\x00\x01',
                        "checksum": b'\x00\x00', "urg": b'\x00\x00'}
 
     def encode(self):
+        rawHeader = bytes(0)
         # Mandatory TCP header segments
-        for segment in self.mandatorySections:
-            self.encodedData += self.header[segment]
+        for segment in self.MANDATORY_SECTIONS:
+            rawHeader += self.header[segment]
 
         # Optional TCP header segments
         pass  # TODO: Do me!
 
-        return self.encodedData
+        return rawHeader + self.data
 
     @staticmethod
     def decode(data):
@@ -203,7 +221,7 @@ class TcpGram(object):
             end = start + newTcpGram.memMap[segment][0]
             newTcpGram.header[segment] = newTcpGram.encodedData[start:end]
 
-            if segment not in newTcpGram.binaryOnlyValues:
+            if segment not in newTcpGram.BINARY_ONLY_VALUES:
                 newTcpGram.header[segment] = int.from_bytes(newTcpGram.header[segment], "big")
                 if "length" == segment:
                     newTcpGram.header[segment] = TcpGram.decodeLength(newTcpGram.header[segment])
@@ -228,8 +246,8 @@ class TcpGram(object):
 
         for flag in flags:
             try:
-                assert (isinstance(flag, str) and flag in self.flags)
-                self.header["flags"] = packByte(unpackByte(self.header["flags"]) | unpackByte(self.flags[flag]))
+                assert (isinstance(flag, str) and flag in self.FLAGS)
+                self.header["flags"] = packByte(unpackByte(self.header["flags"]) | unpackByte(self.FLAGS[flag]))
             except AssertionError:
                 if isinstance(flag, str):
                     stderr.write("TCP Error: Flag does not exist: " + flag + "\n")
@@ -239,8 +257,8 @@ class TcpGram(object):
     def getFlags(self):
         flags = []
 
-        for flag in self.flags:
-            if unpackByte(self.flags[flag]) & unpackByte(self.header["flags"]):
+        for flag in self.FLAGS:
+            if unpackByte(self.FLAGS[flag]) & unpackByte(self.header["flags"]):
                 flags.append(flag)
 
         return flags
@@ -249,6 +267,16 @@ class TcpGram(object):
         assert isinstance(data, bytes)
 
         self.encodedData += data
+
+    def __eq__(self, other):
+        equality = True
+
+        if self.data != other.data:
+            return False
+        else:
+            for segment in self.header:
+                if self.header[segment] != other.header[segment]:
+                    return False
 
 
 def unpackByte(b):

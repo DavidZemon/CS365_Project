@@ -8,10 +8,13 @@
 """
 @description:
 """
+import logging
+
 __author__ = 'david'
 
 from src.TCP import TcpServer
 
+logging.basicConfig(level="DEBUG")
 server = TcpServer(12000)
 server.recvConnection()
 
