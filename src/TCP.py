@@ -20,7 +20,7 @@ __author__ = 'david'
 
 MAX_PACKET_SEND_ATTEMPTS = 5
 DEFAULT_SOCKET_TIMEOUT = 10  # Timeout for blocking socket calls (in seconds)
-SIMPLE_PACKET_BUFFER = 2048  # Bytes required to receive a simple TCP packet (header only); Default = 20
+SIMPLE_PACKET_BUFFER = 20  # Bytes required to receive a simple TCP packet (header only); Default = 20
 
 
 class TCP(object):
@@ -49,6 +49,7 @@ class TCP(object):
         if getResponse:
             # Wait for a response...
             recvAddress = None  # Init recvAddress for while loop
+            response = None
             startTime = time()  # Get current system time
             while recvAddress != self.dstAddress:  # Try and try again until we receive from the correct address
                 self.udp.socket.settimeout(self.timeout + startTime - time())  # Update timeout to be 20 seconds after
@@ -253,7 +254,7 @@ class TcpGram(object):
         for flag in flags:
             try:
                 assert (isinstance(flag, str) and flag in TcpGram.FLAGS)
-                self.header["flags"] = packByte(unpackByte(self.header["flags"]) | unpackByte(TcpGram.FLAGS[flag]))
+                self.header["flags"] = pack('<B', unpackByte(self.header["flags"]) | unpackByte(TcpGram.FLAGS[flag]))
             except AssertionError:
                 if isinstance(flag, str):
                     stderr.write("TCP Error: Flag does not exist: " + flag + "\n")
@@ -300,10 +301,6 @@ class TcpGram(object):
 
 def unpackByte(b):
     return unpack('<B', b)[0]
-
-
-def packByte(b):
-    return pack('<B', b)
 
 
 if "__main__" == __name__:
