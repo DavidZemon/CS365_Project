@@ -14,29 +14,8 @@ import logging
 from socket import socket, AF_INET, SOCK_DGRAM
 
 
-class UDPServer(object):
-    def __init__(self, port):
-        logging.getLogger(__name__).debug("Starting UDPServer")
-        self.port = port
-        self.socket = socket(AF_INET, SOCK_DGRAM)
-        self.socket.bind(('', self.port))
-
-    def recvfrom(self, bufferSize):
-        assert (isinstance(bufferSize, int))
-        return self.socket.recvfrom(bufferSize)
-
-    def sendto(self, data, address):
-        assert (isinstance(data, bytes))
-        assert (isinstance(address, tuple))
-        assert (isinstance(address[0], str))
-        assert (isinstance(address[1], int))
-
-        self.socket.sendto(data, address)
-
-
-class UDPClient(object):
+class UDP(object):
     def __init__(self):
-        logging.getLogger(__name__).debug("Starting UDPClient")
         self.socket = socket(AF_INET, SOCK_DGRAM)
 
     def sendto(self, data, address):
@@ -55,6 +34,21 @@ class UDPClient(object):
 
     def close(self):
         self.socket.close()
+
+
+class UDPServer(UDP):
+    def __init__(self, port):
+        assert (isinstance(port, int))
+        super().__init__()
+        logging.getLogger(__name__).debug("Starting UDPServer")
+        self.port = port
+        self.socket.bind(('', self.port))
+
+
+class UDPClient(UDP):
+    def __init__(self):
+        super().__init__()
+        logging.getLogger(__name__).debug("Starting UDPClient")
 
 
 if "__main__" == __name__:

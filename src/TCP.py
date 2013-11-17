@@ -12,7 +12,7 @@
 import logging
 from sys import stderr
 from struct import unpack, pack
-from time import time
+from time import time, sleep
 
 from src.UDP import UDPClient, UDPServer
 
@@ -27,6 +27,134 @@ class TCP(object):
     MAX_DATA_SIZE = MAX_PACKET_SIZE - MINIMUM_HEADER_SIZE
     MAX_PACKET_SEND_ATTEMPTS = 5
     DEFAULT_SOCKET_TIMEOUT = 10  # Timeout for blocking socket calls (in seconds)
+
+    def __init__(self, srcPort, timeout=DEFAULT_SOCKET_TIMEOUT):
+        assert ("<class 'src.TCP.TCP'>" != str(self.__class__))  # Ensure TCP is not instantiated
+        assert (isinstance(srcPort, int))
+        assert (isinstance(timeout, (int, float)))
+
+        self.srcPort = srcPort
+        self.connected = False
+        self.dstPort = None  # Integer representing destination port number
+        self.internetLayer = None
+        self.dstAddress = ()
+        self.timeout = timeout
+        self.ackNum = None
+        self.seqNum = 0
+        self.cache = {}  # TODO: Implement me!
+
+    def sendPacket(self, packet, attempt=0, getResponse=True):
+        assert (isinstance(packet, TCP.Packet))
+        assert (isinstance(attempt, int))
+        assert (isinstance(getResponse, bool))
+
+        if attempt == TCP.MAX_PACKET_SEND_ATTEMPTS:
+            raise Exception("TcpClient.sendPacket() error: server response error")
+
+        logging.getLogger(__name__).debug("TCP.sendPacket(): Attempt #" + str(attempt))
+
+        # Send the packet...
+        self.internetLayer.sendto(packet.encode(), self.dstAddress)
+
+        # And if a response was requested, wait for it
+        if getResponse:
+            # Init recvAddress for while loop
+            recvAddress = None
+            response = None
+            startTime = time()  # Get current system time
+            while recvAddress != self.dstAddress:  # Try and try again until we receive from the correct address
+                self.internetLayer.socket.settimeout(
+                    self.timeout + startTime - time())  # Update timeout to be 20 seconds after
+                # TODO: Confirm that MINIMUM_HEADER_SIZE bytes is enough; Is it worth adding wiggle room?
+                logging.getLogger(__name__).debug("TCP.sendPacket(): Waiting on ACK from " + str(self.dstAddress))
+                response, recvAddress = self.internetLayer.recvfrom(TCP.MINIMUM_HEADER_SIZE)
+                logging.getLogger(__name__).debug("TCP.sendPacket(): Received packet from " + str(recvAddress))
+
+            # Receive a packet
+            response = TCP.Packet.decode(response)
+
+            # Check for acknowledgement
+            if "ack" not in response.getFlags():
+                raise Exception("TcpClient.sendPacket() error: response did not ACK")
+
+            # Check for acknowledged seq. # to increment by 1 (if not incremented by 1, try again)
+            if response.header["ackNum"] != (packet.header["ackNum"] + 1):
+                print("This shouldn't happen on a reliable network!")
+                return self.sendPacket(packet, attempt + 1)
+            else:
+                return response
+
+    def sendData(self, data):
+        assert (None != self.dstAddress)
+        assert (isinstance(data, bytes))
+
+        # Split up the data into smaller chunks if necessary
+        packetNum = 0
+        print("Data length: " + str(len(data)))
+        while len(data):
+            logging.getLogger(__name__).debug("TCP.sendData(): Sending packet #" + str(packetNum))
+            packet = TCP.Packet()
+            packet.create(self.srcPort, self.dstAddress[1], self.seqNum, self.ackNum)
+            if len(data) >= TCP.MAX_DATA_SIZE:
+                dataLen = TCP.MAX_DATA_SIZE
+            else:
+                dataLen = len(data)
+            packet.addData(data[0:dataLen])
+            data = data[dataLen:]
+            print(packet)
+            self.sendPacket(packet)
+            sleep(0.5)
+
+        # Data all done! Send FIN
+        logging.getLogger(__name__).debug("TCP.sendData(): Sending FIN!")
+        packet = TCP.Packet()
+        packet.create(self.srcPort, self.dstAddress[1], self.seqNum, self.ackNum)
+        packet.setFlags(["fin"])
+        self.sendPacket(packet, getResponse=False)
+
+    def recv(self, reqAddr, httpTimerEnd=None):
+        """
+
+        """
+        # TODO: Keep track of whether a timeout event is due to HTTP timeout or TCP timeout
+
+        if None != reqAddr:
+            assert (isinstance(reqAddr, tuple))
+            assert (isinstance(reqAddr[0], str))
+            assert (isinstance(reqAddr[1], int))
+            assert (isinstance(httpTimerEnd, float))
+
+        # Set the timeout if necessary
+        if None != reqAddr:
+            # If HTTP gave a timeout value and that time has been surpassed, raise an exception
+            if 0 > httpTimerEnd - time():
+                # TODO: Implement flow control instead of being a whiny bitch
+                raise TimeoutError("HTTP request timed out")
+
+            socketTimeout = min([httpTimerEnd - time(), TCP.DEFAULT_SOCKET_TIMEOUT])
+            self.internetLayer.socket.settimeout(socketTimeout)
+        else:
+            self.internetLayer.socket.settimeout(None)
+
+        # Wait for a packet
+        packet, clientAddress = self.internetLayer.recvfrom(TCP.MAX_PACKET_SIZE)
+        print("TCP.recv() just received:\n" + str(packet) + "\n---------------")
+
+        # If a specific address was requested, check it
+        if None != reqAddr and reqAddr != clientAddress:
+            #noinspection PyUnboundLocalVariable
+            print("*****************\nawwwwwww shit tits\n*****************")
+            return self.recv(reqAddr, httpTimerEnd)
+        else:
+            self.ackNum += 1
+            ackPacket = TCP.Packet()
+            ackPacket.create(self.srcPort, self.dstPort, self.seqNum, self.ackNum)
+            ackPacket.setFlags(["ack"])
+            self.sendPacket(ackPacket, getResponse=False)
+            return TCP.Packet.decode(packet)
+
+    def close(self):
+        self.internetLayer.close()
 
     class Packet(object):
         """
@@ -145,6 +273,9 @@ class TCP(object):
             return self.data
 
         def __eq__(self, other):
+            if type(self) != type(other):
+                return False
+
             # Check for equal lengths
             if len(self.encode()) != len(other.encode()):
                 # NOTE: Not an efficient first test... but easy
@@ -170,116 +301,12 @@ class TCP(object):
         def __bool__(self):
             return self.header != {}
 
+        def __str__(self):
+            return str(self.header) + '\n' + str(self.data)
+
         @staticmethod
         def unpackByte(b):
             return unpack('<B', b)[0]
-
-    def __init__(self, srcPort, timeout=DEFAULT_SOCKET_TIMEOUT):
-        assert ("<class 'src.TCP.TCP'>" != str(self.__class__))  # Ensure TCP is not instantiated
-        assert (isinstance(srcPort, int))
-        assert (isinstance(timeout, (int, float)))
-
-        self.srcPort = srcPort
-        self.connected = False
-        self.dstPort = None  # Integer representing destination port number
-        self.internetLayer = None
-        self.dstAddress = ()
-        self.timeout = timeout
-        self.ackNum = None
-        self.seqNum = 0
-        self.cache = {}  # TODO: Implement me!
-
-    def sendPacket(self, packet, attempt=0, getResponse=True):
-        assert (isinstance(packet, TCP.Packet))
-        assert (isinstance(attempt, int))
-
-        if attempt == TCP.MAX_PACKET_SEND_ATTEMPTS:
-            raise Exception("TcpClient.sendPacket() error: server response error")
-
-        logging.getLogger(__name__).debug("TCP.sendPacket(): Attempt #" + str(attempt))
-
-        self.internetLayer.sendto(packet.encode(), self.dstAddress)
-
-        if getResponse:
-            # Wait for a response...
-            recvAddress = None  # Init recvAddress for while loop
-            response = None
-            startTime = time()  # Get current system time
-            while recvAddress != self.dstAddress:  # Try and try again until we receive from the correct address
-                self.internetLayer.socket.settimeout(
-                    self.timeout + startTime - time())  # Update timeout to be 20 seconds after
-                # TODO: Confirm that MINIMUM_HEADER_SIZE bytes is enough; Is it worth adding wiggle room?
-                logging.getLogger(__name__).debug("TCP.sendPacket(): Waiting on ACK from " + str(self.dstAddress))
-                response, recvAddress = self.internetLayer.recvfrom(TCP.MINIMUM_HEADER_SIZE)
-                logging.getLogger(__name__).debug("TCP.sendPacket(): Received packet from " + str(recvAddress))
-
-            # Receive a packet
-            response = TCP.Packet.decode(response)
-
-            # Check for acknowledgement
-            if "ack" not in response.getFlags():
-                raise Exception("TcpClient.sendPacket() error: response did not ACK")
-
-            # Check for acknowledged seq. # to increment by 1 (if not incremented by 1, try again)
-            if response.header["ackNum"] != (packet.header["ackNum"] + 1):
-                return self.sendPacket(packet, attempt + 1)
-            else:
-                return response
-
-    def sendData(self, data):
-        assert (None != self.dstAddress)
-        assert (isinstance(data, bytes))
-
-        # Split up the data into smaller chunks if necessary
-        while len(data):
-            packet = TCP.Packet()
-            packet.create(self.srcPort, self.dstAddress[1], self.seqNum, self.ackNum)
-            if len(data) >= TCP.MAX_DATA_SIZE:
-                dataLen = TCP.MAX_DATA_SIZE
-            else:
-                dataLen = len(data)
-            packet.addData(data[0:dataLen])
-            data = data[dataLen:]
-            self.sendPacket(packet)
-
-        # Data all done! Send FIN
-        packet = TCP.Packet()
-        packet.create(self.srcPort, self.dstAddress[1], self.seqNum, self.ackNum)
-        packet.setFlags(["fin"])
-        self.sendPacket(packet)
-
-    def recv(self, reqAddr, httpTimerEnd):
-        """
-
-        """
-
-        if None != reqAddr:
-            assert (isinstance(reqAddr, tuple))
-            assert (isinstance(reqAddr[0], str))
-            assert (isinstance(reqAddr[1], int))
-            assert (isinstance(httpTimerEnd, float))
-
-        # Set the timeout if necessary
-        if None != reqAddr:
-            # If HTTP gave a timeout value and that time has been surpassed, raise an exception
-            if 0 > httpTimerEnd - time():
-                # TODO: Implement flow control instead of being a whiny bitch
-                raise TimeoutError("HTTP request timed out")
-
-            socketTimeout = min([httpTimerEnd - time(), TCP.DEFAULT_SOCKET_TIMEOUT])
-            self.internetLayer.socket.settimeout(socketTimeout)
-        else:
-            self.internetLayer.socket.settimeout(None)
-
-        # Wait for a packet
-        packet, clientAddress = self.internetLayer.recvfrom(TCP.MAX_PACKET_SIZE)
-
-        # If a specific address was requested, check it
-        if None != reqAddr and reqAddr != clientAddress:
-            #noinspection PyUnboundLocalVariable
-            return self.recv(reqAddr, httpTimerEnd)
-
-        return TCP.Packet.decode(packet)
 
 
 class TcpClient(TCP):
@@ -335,7 +362,7 @@ class TcpServer(TCP):
         super().__init__(srcPort, timeout)
         self.internetLayer = UDPServer(self.srcPort)
 
-    def recvConnection(self):
+    def recvConnection(self, port=None):
         """
         Perform server-side three-way handshake
         """
@@ -344,41 +371,47 @@ class TcpServer(TCP):
         self.internetLayer.socket.setblocking(1)  # Ensure no timeout occurs while waiting for a client connection
         logging.getLogger(__name__).debug("TcpServer.recvConnection(): Waiting on connection...")
 
-        # Wait for the first TCP gram and decode it
+        # Wait for the first TCP packet and decode it
         packet, clientAddress = self.internetLayer.recvfrom(TCP.MINIMUM_HEADER_SIZE)
         logging.getLogger(__name__).debug("TcpServer.recvConnection(): Packet received!!! I feel loved!")
         packet = TCP.Packet.decode(packet)
 
-        # If gram wasn't a valid handshake initializer, start over
-        if ["syn"] != packet.getFlags():
-            logging.getLogger(__name__).info(
-                'TcpServer.recvConnection(): Expecting flags == ["syn"], received ' + str(packet.getFlags()))
-            self.recvConnection()
+        # If a port was specified, check to ensure the received packet came through the requested port
+        if None != port and port != packet.header["srcPort"]:
+            # Received packet came from the wrong port, try another connection
+            self.recvConnection(port)
         else:
-            logging.getLogger(__name__).debug("TcpServer.recvConnection(): Handshake part 1 complete! Proceeding to "
-                                              "send SYN-ACK")
-            # Handshake initializer was valid, lets read the packet...
-            self.dstAddress = clientAddress
-            self.dstPort = packet.header["srcPort"]
-            ackNum = packet.header["seqNum"] + 1
-            seqNum = 0
-
-            # ... and send a SYN-ACK response
-            packet = TCP.Packet()
-            packet.create(self.srcPort, self.dstPort, seqNum, ackNum)
-            packet.setFlags(["syn", "ack"])
-            response = self.sendPacket(packet)
-
-            # If the three-way connection failed (any flags set other than ACK), send a RST packet
-            if ["ack"] != response.getFlags():
+            # If gram wasn't a valid handshake initializer, start over
+            if ["syn"] != packet.getFlags():
                 logging.getLogger(__name__).info(
-                    'TcpServer.recvConnection(): Expecting flags == ["ack"], received ' + str(response.getFlags()))
-                packet = TCP.Packet()
-                packet.create(self.srcPort, self.dstPort, seqNum, ackNum)
-                packet.setFlags(["rst"])
-                self.sendPacket(packet.encode(), getResponse=False)
+                    'TcpServer.recvConnection(): Expecting flags == ["syn"], received ' + str(packet.getFlags()))
+                self.recvConnection(port)
+            else:
+                logging.getLogger(__name__).debug(
+                    "TcpServer.recvConnection(): Handshake part 1 complete! Proceeding to "
+                    "send SYN-ACK")
+                # Handshake initializer was valid, lets read the packet...
+                self.dstAddress = clientAddress
+                self.dstPort = packet.header["srcPort"]
+                self.ackNum = packet.header["seqNum"] + 1
+                self.seqNum = 0
 
-            logging.getLogger(__name__).debug("TcpServer.recvConnection(): Connection established!")
+                # ... and send a SYN-ACK response
+                packet = TCP.Packet()
+                packet.create(self.srcPort, self.dstPort, self.seqNum, self.ackNum)
+                packet.setFlags(["syn", "ack"])
+                response = self.sendPacket(packet)
+
+                # If the three-way connection failed (any flags set other than ACK), send a RST packet
+                if ["ack"] != response.getFlags():
+                    logging.getLogger(__name__).info(
+                        'TcpServer.recvConnection(): Expecting flags == ["ack"], received ' + str(response.getFlags()))
+                    packet = TCP.Packet()
+                    packet.create(self.srcPort, self.dstPort, self.seqNum, self.ackNum)
+                    packet.setFlags(["rst"])
+                    self.sendPacket(packet.encode(), getResponse=False)
+
+                logging.getLogger(__name__).debug("TcpServer.recvConnection(): Connection established!")
 
 
 if "__main__" == __name__:
