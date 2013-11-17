@@ -12,6 +12,7 @@ assignment. You do not need to implement the function to display the received ob
 
 import logging
 from socket import socket, AF_INET, SOCK_DGRAM
+from time import sleep
 
 
 class UDP(object):
@@ -26,6 +27,7 @@ class UDP(object):
 
         logging.getLogger(__name__).debug("Sending data to " + str(address))
         self.socket.sendto(data, address)
+        sleep(0.5)  # TODO: Remove me when no more packet dupes
 
     def recvfrom(self, bufferSize):
         assert (isinstance(bufferSize, int))

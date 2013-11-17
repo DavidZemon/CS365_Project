@@ -11,7 +11,7 @@
 import logging
 from os import path
 from time import time
-from src.TCP import TcpClient, TCP, TcpServer
+from src.TCP import TcpClient, TCP, TcpServer, AddressFilterError
 
 
 class HTTP(object):
@@ -41,13 +41,13 @@ class HTTP(object):
         logging.getLogger(__name__).debug("HTTP.recvPacket(): Waiting on first TCP packet...")
         while None == respPacket or "fin" not in respPacket.getFlags():
             if None == ipAddress:
-                respPacket = self.tcp.recv(None)  # TODO: Catch the Timeout exception
-                if HTTP.PORT != respPacket.header["srcPort"]:
-                    logging.getLogger(__name__).debug("HTTP.recvPacket(): Received wrong TCP packet :(")
-                    self.recvPacket(packetType, None)
+                try:
+                    respPacket = self.tcp.recv(None)  # TODO: Catch the Timeout exception
+                except AddressFilterError:
+                    continue
             else:
                 respPacket = self.tcp.recv((ipAddress, HTTP.PORT),
-                                           timeout + time())  # TODO: Catch the Timeout exception
+                                           timerOverride=timeout + time())  # TODO: Catch the Timeout exception
             logging.getLogger(__name__).debug("HTTP.recvPacket(): Received good TCP packet! :)")
             httpPacket += respPacket.getData()
 

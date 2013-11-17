@@ -12,7 +12,7 @@
 import logging
 from src.HTTP import HttpServer
 
-#logging.basicConfig(level="DEBUG")
+logging.basicConfig(level="DEBUG")
 
 server = HttpServer("127.0.0.1")
 server.recv()
