@@ -12,13 +12,9 @@
 import logging
 from src.HTTP import HttpClient
 
-#logging.basicConfig(level="DEBUG")
+logging.basicConfig(level="INFO")
 
 client = HttpClient("www.swaggestofdudes.com")
-rawContent, t = client.getFile("127.0.0.1", "test.txt")
+rawContent, t = client.getFile("127.0.0.1", "src/HTTP.py")
 
-f = open("test.txt", 'w')
-
-for line in rawContent:
-    f.write(line)
-    print(line)
+print(rawContent.decode('utf-8'))

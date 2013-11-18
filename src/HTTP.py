@@ -10,13 +10,19 @@
 """
 import logging
 from os import path
-from time import time
+from time import time, strftime, gmtime
 from src.TCP import TcpClient, TCP, TcpServer, AddressFilterError
 
 
 class HTTP(object):
     """
+    @description:
+    Supports the following features:
+        - TODO: Fill me in
 
+    Does not support the following features:
+        - Persistent connection
+        - Almost everything else
     """
 
     PORT = 12001
@@ -37,7 +43,7 @@ class HTTP(object):
         respPacket = None
         httpPacket = bytes()
 
-        # Continue receiving packets until the FIN flag is set, signaling the complete HTTP packet has been sent
+        # Receive the first TCP packet
         logging.getLogger(__name__).debug("HTTP.recvPacket(): Waiting on first TCP packet...")
         while None == respPacket:
             if None == ipAddress:
@@ -52,14 +58,8 @@ class HTTP(object):
             httpPacket += respPacket.getData()
             # TODO: Should we check some TCP flags and do things accordingly?
 
-        logging.getLogger(__name__).debug("HTTP.recvPacket(): Received complete HTTP packet! :D")
-
         # Decode the HTTP packet
-        httpPacket = httpPacket.decode('utf-8')
         httpPacket = packetType.parse(httpPacket)
-
-        print("Printing packet from HTTP.recvPacket():\n---------------------------\n" + str(
-            httpPacket) + "\n---------------------------")
 
         if HTTP.RequestPacket == packetType:
             return httpPacket, httpPacket.verb
@@ -75,29 +75,30 @@ class HTTP(object):
                         'exe': 'application/octet-stream', 'zip': 'application/zip', 'doc': 'application/msword',
                         'xls': 'application/vnd.ms-excel', 'ppt': 'application/vnd.ms-powerpoint', 'gif': 'image/gif',
                         'png': 'image/png', 'jpeg': 'image/jpg', 'jpg': 'image/jpg', 'php': 'text/plain'}
+        UNKNOWN_CONTENT = 'application/octet-stream'
 
         def __init__(self):
             assert ("<class 'src.HTTP.HTTP.Packet'>" != str(self.__class__))
 
         @staticmethod
         def parse(packet):
-            assert (isinstance(packet, str))
+            assert (isinstance(packet, bytes))
 
-            temp = packet.split(2 * HTTP.NEW_LINE)
-            print(temp)
-            header = temp[0]
+            temp = packet.split((2 * HTTP.NEW_LINE).encode('utf-8'))
+
+            header = temp[0].decode('utf-8')
             try:
-                data = temp[1:]
+                data = bytes(0)
+                for dat in temp[1:]:
+                    data += dat
             except IndexError:
-                data = None
+                data = bytes(0)
 
             # Split the header lines into words
             temp = header.split(HTTP.NEW_LINE)
-            print(temp)
             header = []
             for line in temp:
                 header.append(line.split())
-                print("New: " + str(header))
 
             return header, data
 
@@ -110,7 +111,7 @@ class HTTP(object):
         def __str__(self):
             assert (isinstance(self, (HTTP.RequestPacket, HTTP.ResponsePacket)))
 
-            return self.assemble()
+            return str(self.assemble())
 
     class RequestPacket(Packet):
         def __init__(self):
@@ -123,12 +124,11 @@ class HTTP(object):
             assert ('' != self.hostStr)
 
             s = ''
-
             s += self.verb + ' ' + self.arg + ' ' + HTTP.Packet.HTTP_VERSION + HTTP.NEW_LINE
             s += "Host: " + self.hostStr + HTTP.NEW_LINE
             s += HTTP.NEW_LINE
 
-            return s
+            return s.encode('utf-8')
 
         @staticmethod
         def parse(packet):
@@ -164,7 +164,7 @@ class HTTP(object):
     class ResponsePacket(Packet):
         def __init__(self):
             super().__init__()
-            self.data = None
+            self.data = bytes(0)
             self.code = ''
             self.codeStr = ''
             self.options = {}
@@ -180,7 +180,7 @@ class HTTP(object):
             self.options = options
 
         def addData(self, data):
-            assert (isinstance(data, str))
+            assert (isinstance(data, bytes))
 
             self.data += data
 
@@ -193,34 +193,32 @@ class HTTP(object):
                 for option in self.options:
                     s += option + ' ' + self.options[option] + HTTP.NEW_LINE
 
+            # End of header! Insert extra newline
+            s += HTTP.NEW_LINE
+
+            s = s.encode('utf-8')
+            s += self.data
+
             return s
 
         @staticmethod
         def parse(packet):
             header, data = HTTP.Packet.parse(packet)
-            print(header)
 
             if header[0][0] not in [HTTP.Packet.HTTP_VERSION, "HTTP/1.0"]:
                 raise AssertionError("Packet is not an HTTP response")
 
             newPacket = HTTP.ResponsePacket()
 
-            try:
-                assert (isinstance(data, list))
-                newPacket.data = ''
-                for piece in data:
-                    newPacket.data += piece + 2 * HTTP.NEW_LINE
-            except AssertionError:
-                newPacket.data = None
+            newPacket.data = data
 
             newPacket.code = int(header[0][1])
             newPacket.codeStr = ' '.join(header[0][2:])
             header.pop(0)
 
-            print("Remaining header: " + str(header))
             for line in header:
                 if line:
-                    newPacket.options[line[0]] = line[1:]
+                    newPacket.options[line[0]] = ' '.join(line[1:])
 
             return newPacket
 
@@ -253,6 +251,9 @@ class HttpClient(HTTP):
         self.hostStr = hostStr
 
     def getFile(self, ipAddress, filePath):
+        assert (isinstance(ipAddress, str))
+        assert (isinstance(filePath, str))
+
         self.transportLayer.connect(ipAddress, HTTP.PORT)
 
         packet = HTTP.RequestPacket()
@@ -262,9 +263,25 @@ class HttpClient(HTTP):
 
         # Send the request packet and get a response
         logging.getLogger(__name__).debug("HTTP.HTTPClient.getFile(): Sending request...")
-        self.transportLayer.sendData(packet.assemble().encode('utf-8'))
+        self.transportLayer.sendData(packet.assemble())
         logging.getLogger(__name__).debug("HTTP.HTTPClient.getFile(): Request sent... waiting on response")
+
+        return self.getServerResponse(ipAddress)
+
+    def getServerResponse(self, ipAddress):
+        assert (isinstance(ipAddress, str))
+
+        # Receive the HTTP packet header and first bits of data (if applicable)
         response, code = self.recvPacket(HTTP.ResponsePacket, ipAddress)
+
+        # Receive remaining HTTP packet data
+        tcpPacket = None
+        while None == tcpPacket or "fin" not in tcpPacket.getFlags():
+            tcpPacket = self.transportLayer.recv((ipAddress, HTTP.PORT), HTTP.DEFAULT_TIMEOUT + time())
+            if tcpPacket.getData():
+                response.addData(tcpPacket.getData())
+
+        logging.getLogger(__name__).debug("HTTP.recvPacket(): Received complete HTTP packet! :D")
 
         # Ensure the response was positive (contains file)
         if HTTP.RESPONSE_CODE[code] != "OK":
@@ -289,22 +306,48 @@ class HttpServer(HTTP):
 
         # Create our response packet
         if "GET" == verb:
-            # File was requested; check if it exists
-            response = HTTP.ResponsePacket()
-            response.hostStr = self.hostStr
-            if path.exists(packet.arg):
-                # File exists: Set the packet accordingly and add the file contents
-                f = open(packet.arg, 'r')
-                response.create("OK", None)  # TODO: Add options
-            else:
-                # File didn't exists: Set the packet with an error code
-                response.create(404, None)
+            response = self.serviceGet(packet)
         else:
             raise Exception("Shouldn't this have been caught somewhere else already???")
 
-        self.transportLayer.sendData(response.assemble().encode('utf-8'))
+        self.transportLayer.sendData(response.assemble())
 
         self.transportLayer.close()
+
+    def serviceGet(self, packet):
+        assert (isinstance(packet, HTTP.RequestPacket))
+
+        # File was requested; check if it exists
+        response = HTTP.ResponsePacket()
+        response.hostStr = self.hostStr
+        if path.exists(packet.arg):
+            # File exists: Set the packet accordingly and add the file contents
+            response.create(200, {})  # TODO: Add options
+            f = open(packet.arg, 'rb')
+            fileExt = packet.arg.split('.')[1]
+
+            # Set file type
+            try:
+                response.options["Content-Type:"] = HTTP.Packet.CONTENT_TYPE[fileExt]
+            except KeyError:
+                response.options["Content-Type:"] = HTTP.Packet.UNKNOWN_CONTENT
+
+            # Set the standard response options
+            self.addBasicResponseOptions(response, 200)
+
+            # Add the file contents
+            response.addData(f.read())
+        else:
+            # File didn't exists: Set the packet with an error code
+            response.create(404, None)
+
+        return response
+
+    def addBasicResponseOptions(self, response, code):
+        response.options["date:"] = strftime("%a, %d %b %Y %H:%M:%S %Z", gmtime())
+        response.options["status:"] = str(code) + ' ' + HTTP.RESPONSE_CODE[code]
+        response.options["version:"] = HTTP.Packet.HTTP_VERSION
+        response.options["server:"] = self.hostStr
 
 
 if "__main__" == __name__:

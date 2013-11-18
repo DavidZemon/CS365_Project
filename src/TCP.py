@@ -30,6 +30,8 @@ class TCP(object):
     Optional section of TCP header NOT implemented!
     """
 
+    # TODO: TODO TODO TODO!!! Handle ack and sequence num overflow
+
     MAX_PACKET_SIZE = 512  # Maximum packet size in bytes, including the header
     MINIMUM_HEADER_SIZE = 20  # Bytes required to receive a simple TCP packet (header only); Default = 20
     MAX_DATA_SIZE = MAX_PACKET_SIZE - MINIMUM_HEADER_SIZE
@@ -64,11 +66,9 @@ class TCP(object):
         s = "Sending packet"
         if not getAck:
             s += " (no response requested)"
-        print(s)
 
         # Send the packet...
         self.internetLayer.sendto(packet.encode(), self.dstAddress)
-        print("Sending: " + str(packet))
 
         # And if a response was requested, wait for it
         if getAck:
@@ -94,9 +94,7 @@ class TCP(object):
 
             # Check for acknowledged seq. # to increment by len(packet.getData())
             expectedAckNum = self.seqNum + (len(packet.data) if len(packet.data) else 1)
-            print("Received: " + str(response))
             if response.header["ackNum"] != expectedAckNum:
-                print("This shouldn't happen on a reliable network!")
                 return self.sendPacket(packet, attempt + 1)
             else:
                 self.seqNum = expectedAckNum
@@ -108,7 +106,6 @@ class TCP(object):
 
         # Split up the data into smaller chunks if necessary
         packetNum = 0
-        print("Data length: " + str(len(data)))
         while len(data):
             logging.getLogger(__name__).debug("TCP.sendData(): Sending data #" + str(packetNum))
             packet = TCP.Packet()
@@ -119,7 +116,6 @@ class TCP(object):
                 dataLen = len(data)
             packet.addData(data[0:dataLen])
             data = data[dataLen:]
-            print(packet)
             self.sendPacket(packet)
 
     def recv(self, reqAddr, timerOverride=None):
@@ -149,12 +145,10 @@ class TCP(object):
         # Wait for a packet
         packet, clientAddress = self.internetLayer.recvfrom(TCP.MAX_PACKET_SIZE)
         packet = TCP.Packet.decode(packet)
-        print("TCP.recv() just received:\n" + str(packet) + "\n---------------")
 
         # If a specific address was requested, check it
         if None != reqAddr and reqAddr != clientAddress:
             #noinspection PyUnboundLocalVariable
-            print("*****************\nawwwwwww shit tits\n*****************")
             return self.recv(reqAddr, timerOverride)
         else:
             self.ackNum = packet.header["seqNum"] + (len(packet.data) if len(packet.data) else 1)

@@ -27,7 +27,6 @@ class UDP(object):
 
         logging.getLogger(__name__).debug("Sending data to " + str(address))
         self.socket.sendto(data, address)
-        sleep(0.5)  # TODO: Remove me when no more packet dupes
 
     def recvfrom(self, bufferSize):
         assert (isinstance(bufferSize, int))
