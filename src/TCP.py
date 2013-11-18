@@ -122,13 +122,6 @@ class TCP(object):
             print(packet)
             self.sendPacket(packet)
 
-        # Data all done! Send FIN
-        logging.getLogger(__name__).debug("TCP.sendData(): Sending FIN!")
-        packet = TCP.Packet()
-        packet.create(self.srcPort, self.dstAddress[1], self.seqNum, self.ackNum)
-        packet.setFlags(["fin"])
-        self.sendPacket(packet, getAck=False)
-
     def recv(self, reqAddr, timerOverride=None):
         """
 
@@ -172,6 +165,13 @@ class TCP(object):
             return packet
 
     def close(self):
+        # Data all done! Send FIN
+        logging.getLogger(__name__).debug("TCP.sendData(): Sending FIN!")
+        packet = TCP.Packet()
+        packet.create(self.srcPort, self.dstAddress[1], self.seqNum, self.ackNum)
+        packet.setFlags(["fin"])
+        self.sendPacket(packet, getAck=False)
+
         self.internetLayer.close()
 
     class Packet(object):

@@ -26,30 +26,31 @@ class HTTP(object):
     DEFAULT_TIMEOUT = 20  # Timeout for blocking TCP calls (in seconds)
 
     def __init__(self):
-        self.tcp = None
+        self.transportLayer = None
 
     def recvPacket(self, packetType, ipAddress, timeout=DEFAULT_TIMEOUT):
         """
         """
         assert (packetType in [HTTP.RequestPacket, HTTP.ResponsePacket])
-        assert (isinstance(self.tcp, TCP))
+        assert (isinstance(self.transportLayer, TCP))
 
         respPacket = None
         httpPacket = bytes()
 
         # Continue receiving packets until the FIN flag is set, signaling the complete HTTP packet has been sent
         logging.getLogger(__name__).debug("HTTP.recvPacket(): Waiting on first TCP packet...")
-        while None == respPacket or "fin" not in respPacket.getFlags():
+        while None == respPacket:
             if None == ipAddress:
                 try:
-                    respPacket = self.tcp.recv(None)  # TODO: Catch the Timeout exception
+                    respPacket = self.transportLayer.recv(None)  # TODO: Catch the Timeout exception
                 except AddressFilterError:
                     continue
             else:
-                respPacket = self.tcp.recv((ipAddress, HTTP.PORT),
-                                           timerOverride=timeout + time())  # TODO: Catch the Timeout exception
+                # TODO: Catch the timeout exception
+                respPacket = self.transportLayer.recv((ipAddress, HTTP.PORT), timerOverride=timeout + time())
             logging.getLogger(__name__).debug("HTTP.recvPacket(): Received good TCP packet! :)")
             httpPacket += respPacket.getData()
+            # TODO: Should we check some TCP flags and do things accordingly?
 
         logging.getLogger(__name__).debug("HTTP.recvPacket(): Received complete HTTP packet! :D")
 
@@ -78,11 +79,10 @@ class HTTP(object):
         def __init__(self):
             assert ("<class 'src.HTTP.HTTP.Packet'>" != str(self.__class__))
 
-            self.hostStr = ''
-
         @staticmethod
         def parse(packet):
             assert (isinstance(packet, str))
+
             temp = packet.split(2 * HTTP.NEW_LINE)
             print(temp)
             header = temp[0]
@@ -105,9 +105,6 @@ class HTTP(object):
             if type(self) != type(other):
                 return False
 
-            if self.hostStr != other.hostStr:
-                return False
-
             return True
 
         def __str__(self):
@@ -120,6 +117,7 @@ class HTTP(object):
             super().__init__()
             self.verb = ""
             self.arg = ""
+            self.hostStr = ''
 
         def assemble(self):
             assert ('' != self.hostStr)
@@ -150,6 +148,9 @@ class HTTP(object):
 
         def __eq__(self, other):
             if not super().__eq__(other):
+                return False
+
+            if self.hostStr != other.hostStr:
                 return False
 
             if self.verb != other.verb:
@@ -184,8 +185,6 @@ class HTTP(object):
             self.data += data
 
         def assemble(self):
-            assert ('' != self.hostStr)
-
             s = ''
 
             s += HTTP.Packet.HTTP_VERSION + ' ' + str(self.code) + ' ' + HTTP.RESPONSE_CODE[self.code] + HTTP.NEW_LINE
@@ -220,7 +219,8 @@ class HTTP(object):
 
             print("Remaining header: " + str(header))
             for line in header:
-                newPacket.options[line[0]] = line[1:]
+                if line:
+                    newPacket.options[line[0]] = line[1:]
 
             return newPacket
 
@@ -249,20 +249,20 @@ class HttpClient(HTTP):
         assert (isinstance(hostStr, str))
 
         super().__init__()
-        self.tcp = TcpClient(HTTP.PORT)
+        self.transportLayer = TcpClient(HTTP.PORT)
         self.hostStr = hostStr
 
-    def getFile(self, ipAddress, path):
-        self.tcp.connect(ipAddress, HTTP.PORT)
+    def getFile(self, ipAddress, filePath):
+        self.transportLayer.connect(ipAddress, HTTP.PORT)
 
         packet = HTTP.RequestPacket()
         packet.verb = "GET"
-        packet.arg = path
+        packet.arg = filePath
         packet.hostStr = self.hostStr
 
         # Send the request packet and get a response
         logging.getLogger(__name__).debug("HTTP.HTTPClient.getFile(): Sending request...")
-        self.tcp.sendData(packet.assemble().encode('utf-8'))
+        self.transportLayer.sendData(packet.assemble().encode('utf-8'))
         logging.getLogger(__name__).debug("HTTP.HTTPClient.getFile(): Request sent... waiting on response")
         response, code = self.recvPacket(HTTP.ResponsePacket, ipAddress)
 
@@ -279,11 +279,11 @@ class HttpServer(HTTP):
         assert (isinstance(hostStr, str))
 
         super().__init__()
-        self.tcp = TcpServer(HTTP.PORT)
+        self.transportLayer = TcpServer(HTTP.PORT)
         self.hostStr = hostStr
 
     def recv(self):
-        self.tcp.recvConnection(HTTP.PORT)
+        self.transportLayer.recvConnection(HTTP.PORT)
 
         packet, verb = self.recvPacket(HTTP.RequestPacket, None)
 
@@ -302,9 +302,9 @@ class HttpServer(HTTP):
         else:
             raise Exception("Shouldn't this have been caught somewhere else already???")
 
-        self.tcp.sendData(response.assemble().encode('utf-8'))
+        self.transportLayer.sendData(response.assemble().encode('utf-8'))
 
-        self.tcp.close()
+        self.transportLayer.close()
 
 
 if "__main__" == __name__:
