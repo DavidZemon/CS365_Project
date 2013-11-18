@@ -274,10 +274,16 @@ class HttpClient(HTTP):
         # Receive the HTTP packet header and first bits of data (if applicable)
         response, code = self.recvPacket(HTTP.ResponsePacket, ipAddress)
 
+        logging.getLogger(__name__).info("Received first data packet...")
+        packetNum = 1
+
         # Receive remaining HTTP packet data
         tcpPacket = None
         while None == tcpPacket or "fin" not in tcpPacket.getFlags():
             tcpPacket = self.transportLayer.recv((ipAddress, HTTP.PORT), HTTP.DEFAULT_TIMEOUT + time())
+            packetNum += 1
+            if "fin" not in tcpPacket.getFlags():
+                logging.getLogger(__name__).info("Received packet #" + str(packetNum))
             if tcpPacket.getData():
                 response.addData(tcpPacket.getData())
 
@@ -337,6 +343,7 @@ class HttpServer(HTTP):
 
             # Add the file contents
             response.addData(f.read())
+            f.close()
         else:
             # File didn't exists: Set the packet with an error code
             response.create(404, None)

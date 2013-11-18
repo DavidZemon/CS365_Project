@@ -14,7 +14,12 @@ from src.HTTP import HttpClient
 
 logging.basicConfig(level="INFO")
 
-client = HttpClient("www.swaggestofdudes.com")
-rawContent, t = client.getFile("127.0.0.1", "src/HTTP.py")
+fileName = "testfile.jpg"
+dstDir = "received/"
 
-print(rawContent.decode('utf-8'))
+client = HttpClient("www.swaggestofdudes.com")
+rawContent, t = client.getFile("127.0.0.1", fileName)
+
+f = open(dstDir + fileName, 'wb')
+f.write(rawContent)
+f.close()

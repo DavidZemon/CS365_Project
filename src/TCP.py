@@ -167,6 +167,7 @@ class TCP(object):
         self.sendPacket(packet, getAck=False)
 
         self.internetLayer.close()
+        self.internetLayer = None
 
     class Packet(object):
         """
@@ -379,6 +380,8 @@ class TcpServer(TCP):
         """
 
         # Initialize some stuff...
+        if None == self.internetLayer:
+            self.internetLayer = UDPServer(port)
         self.internetLayer.socket.setblocking(1)  # Ensure no timeout occurs while waiting for a client connection
         logging.getLogger(__name__).debug("TcpServer.recvConnection(): Waiting on connection...")
 

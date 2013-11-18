@@ -12,7 +12,6 @@ assignment. You do not need to implement the function to display the received ob
 
 import logging
 from socket import socket, AF_INET, SOCK_DGRAM
-from time import sleep
 
 
 class UDP(object):
