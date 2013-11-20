@@ -164,7 +164,7 @@ class TCP(object):
         packet = TCP.Packet()
         packet.create(self.srcPort, self.dstAddress[1], self.seqNum, self.ackNum)
         packet.setFlags(["fin"])
-        self.sendPacket(packet, getAck=False)
+        self.sendPacket(packet, getAck=True)
 
         self.internetLayer.close()
         self.internetLayer = None
