@@ -12,9 +12,9 @@
 import logging
 from src.HTTP import HttpClient
 
-logging.basicConfig(level="INFO")
+#logging.basicConfig(level="DEBUG")
 
-fileName = "testfile.jpg"
+fileName = "testfile.pdf"
 dstDir = "received/"
 
 client = HttpClient("www.swaggestofdudes.com")
