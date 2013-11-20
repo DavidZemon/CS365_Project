@@ -10,6 +10,7 @@
 """
 
 import logging
+from random import randint
 from sys import stderr
 from struct import unpack, pack
 from time import time
@@ -50,8 +51,8 @@ class TCP(object):
         self.dstAddress = ()
         self.timeout = timeout
         self.ackNum = None
-        self.seqNum = 0
-        self.cache = {}  # TODO: Implement me!
+        self.seqNum = randint(0, pow(2, 16) - 1)
+        self.cache = []
 
     def sendPacket(self, packet, attempt=0, getAck=True):
         assert (isinstance(packet, TCP.Packet))
@@ -61,11 +62,8 @@ class TCP(object):
         if attempt == TCP.MAX_PACKET_SEND_ATTEMPTS:
             raise Exception("TcpClient.sendPacket() error: server response error")
 
-        logging.getLogger(__name__).debug("TCP.sendPacket(): Attempt #" + str(attempt))
-
-        s = "Sending packet"
-        if not getAck:
-            s += " (no response requested)"
+        logging.getLogger(__name__).debug(
+            "TCP.sendPacket(): Attempt #" + str(attempt) + "...\n" + str(packet) + '\n------------------')
 
         # Send the packet...
         self.internetLayer.sendto(packet.encode(), self.dstAddress)
@@ -79,25 +77,28 @@ class TCP(object):
             while recvAddress != self.dstAddress:  # Try and try again until we receive from the correct address
                 self.internetLayer.socket.settimeout(
                     self.timeout + startTime - time())  # Update timeout to be 20 seconds after
-                # TODO: Confirm that MINIMUM_HEADER_SIZE bytes is enough; Is it worth adding wiggle room?
                 logging.getLogger(__name__).debug("TCP.sendPacket(): Waiting on ACK from " + str(self.dstAddress))
                 response, recvAddress = self.internetLayer.recvfrom(TCP.MINIMUM_HEADER_SIZE)
-                logging.getLogger(__name__).debug("TCP.sendPacket(): Received packet from " + str(recvAddress))
-
-            # Receive a packet
-            response = TCP.Packet.decode(response)
+                response = TCP.Packet.decode(response)
+                logging.getLogger(__name__).debug("TCP.sendPacket(): Received packet from "
+                                                  "%s:\n%s\n--------------------" % (recvAddress, response))
 
             # Check for acknowledgement
             if "ack" not in response.getFlags():
                 # TODO: Stop being a whiny bitch
+                logging.getLogger(__name__).warning(
+                    "TCP.sendPacket(): response did not ACK...\n%s\n-------------------" % response)
                 raise Exception("TcpClient.sendPacket() error: response did not ACK")
 
             # Check for acknowledged seq. # to increment by len(packet.getData())
-            expectedAckNum = self.seqNum + (len(packet.data) if len(packet.data) else 1)
+            expectedAckNum = self.getExpectedAckNum(packet.data)
             if response.header["ackNum"] != expectedAckNum:
+                logging.getLogger(__name__).warning("TCP.sendPacket(): Packet ACKed wrong seq #%i" % (
+                    response.header["ackNum"]))
                 return self.sendPacket(packet, attempt + 1)
             else:
                 self.seqNum = expectedAckNum
+                self.ackNum = response.header["seqNum"]
                 return response
 
     def sendData(self, data):
@@ -118,7 +119,7 @@ class TCP(object):
             data = data[dataLen:]
             self.sendPacket(packet)
 
-    def recv(self, reqAddr, timerOverride=None):
+    def recv(self, reqAddr=None, timerOverride=None):
         """
 
         """
@@ -148,15 +149,28 @@ class TCP(object):
 
         # If a specific address was requested, check it
         if None != reqAddr and reqAddr != clientAddress:
-            #noinspection PyUnboundLocalVariable
+            self.cache.append(packet)
             return self.recv(reqAddr, timerOverride)
         else:
             self.ackNum = packet.header["seqNum"] + (len(packet.data) if len(packet.data) else 1)
+            if pow(2, 16) - 1 < self.ackNum:  # Check for overflow
+                self.ackNum -= pow(2, 16)
             ackPacket = TCP.Packet()
             ackPacket.create(self.srcPort, self.dstPort, self.seqNum, self.ackNum)
             ackPacket.setFlags(["ack"])
             self.sendPacket(ackPacket, getAck=False)
             return packet
+
+    def getExpectedAckNum(self, data):
+        assert (isinstance(data, bytes))
+
+        retVal = self.seqNum + (len(data) if len(data) else 1)
+
+        # Check for overflow
+        if pow(2, 16) - 1 < retVal:
+            retVal -= pow(2, 16)
+
+        return retVal
 
     def close(self):
         # Data all done! Send FIN
@@ -230,16 +244,10 @@ class TCP(object):
                 newTcpGram.header[segment] = data[start:end]
 
                 # And do some other ugly things when necessary
-                if segment in TCP.Packet.BINARY_ONLY_VALUES:
-                    logging.getLogger(__name__).debug(
-                        "TCP.Packet.decode(): Decoding " + segment + ": " + str(data[start:end]))
-                else:
+                if segment not in TCP.Packet.BINARY_ONLY_VALUES:
                     newTcpGram.header[segment] = int.from_bytes(newTcpGram.header[segment], "big")
                     if "length" == segment:
                         newTcpGram.header[segment] >>= 4
-                    logging.getLogger(__name__).debug(
-                        "TCP.Packet.decode(): Decoding " + segment + ": " + str(data[start:end]) + " ==> " + str(
-                            newTcpGram.header[segment]))
 
             # NOTE: No optional section allowed!
 
@@ -345,9 +353,7 @@ class TcpClient(TCP):
 
             # Send SYN
             packet = TCP.Packet()
-            self.seqNum = 0  # TODO: Set me to random
-            self.ackNum = 0  # Value is ignored in first TCP packet
-            packet.create(self.srcPort, self.dstPort, self.seqNum, self.ackNum)
+            packet.create(self.srcPort, self.dstPort, self.seqNum, 0)
             packet.setFlags(["syn"])
             logging.getLogger(__name__).debug("TcpClient.connect(): Sending SYN packet")
             response = self.sendPacket(packet)
@@ -405,7 +411,7 @@ class TcpServer(TCP):
             # Handshake initializer was valid, lets read the packet...
             self.dstPort = self.dstAddress[1]
             self.ackNum = packet.header["seqNum"] + 1
-            self.seqNum = 0  # TODO: Set me to random number
+            self.seqNum += 1
 
             # ... and send a SYN-ACK response
             packet = TCP.Packet()
