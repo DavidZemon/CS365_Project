@@ -2,6 +2,7 @@
   <dictionary name="david">
     <words>
       <w>addr</w>
+      <w>msword</w>
       <w>recv</w>
       <w>recvfrom</w>
       <w>serv</w>

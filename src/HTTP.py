@@ -14,6 +14,22 @@ from time import time, strftime, gmtime
 from src.TCP import TcpClient, TCP, TcpServer, AddressFilterError
 
 
+class HTTPError(Exception):
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return repr(self.value)
+
+
+class HTTP404(Exception):
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return repr(self.value)
+
+
 class HTTP(object):
     """
     @description:
@@ -274,6 +290,10 @@ class HttpClient(HTTP):
         # Receive the HTTP packet header and first bits of data (if applicable)
         response, code = self.recvPacket(HTTP.ResponsePacket, ipAddress)
 
+        if HTTP.RESPONSE_CODE[code] != "OK":
+            # TODO: Handle me properly!
+            raise Exception("HTTP response error " + str(code) + ":\n" + response)
+
         logging.getLogger(__name__).info("Received first data packet...")
         packetNum = 1
 
@@ -290,11 +310,8 @@ class HttpClient(HTTP):
         logging.getLogger(__name__).debug("HTTP.recvPacket(): Received complete HTTP packet! :D")
 
         # Ensure the response was positive (contains file)
-        if HTTP.RESPONSE_CODE[code] != "OK":
-            # TODO: Handle me properly!
-            raise Exception("HTTP response error " + str(code) + ": " + response.codeStr)
-        else:
-            return response.data, response.options["Content-Type:"]
+
+        return response.data, response.options["Content-Type:"]
 
 
 class HttpServer(HTTP):
