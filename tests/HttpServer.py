@@ -8,6 +8,7 @@
 """
 @description:
 """
+import logging
 
 from signal import signal, SIGINT
 import sys
@@ -25,7 +26,7 @@ def signal_handler(sig, frame):
 
 
 signal(SIGINT, signal_handler)
-#logging.basicConfig(level="DEBUG")
+logging.basicConfig(level="WARNING")
 
 server = HttpServer("127.0.0.1")
 while 1:

@@ -10,10 +10,11 @@
 """
 
 import logging
-from random import randint
+import random
 from sys import stderr
 from struct import unpack, pack
 from time import time
+from socket import timeout
 
 from src.UDP import UDPClient, UDPServer
 
@@ -30,28 +31,30 @@ class TCP(object):
     """
     Optional section of TCP header NOT implemented!
     """
-
+    MIN_DATA_SIZE = 64
     MAX_PACKET_SIZE = 512  # Maximum packet size in bytes, including the header
     MINIMUM_HEADER_SIZE = 20  # Bytes required to receive a simple TCP packet (header only); Default = 20
     MAX_DATA_SIZE = MAX_PACKET_SIZE - MINIMUM_HEADER_SIZE
     DATA_PACKET_STEP = MAX_DATA_SIZE / 16
-    MAX_PACKET_SEND_ATTEMPTS = 5
-    DEFAULT_SOCKET_TIMEOUT = 10  # Timeout for blocking socket calls (in seconds)
+    MAX_PACKET_SEND_ATTEMPTS = 3
+    DEFAULT_SOCKET_TIMEOUT = 1  # Timeout for blocking socket calls (in seconds)
+    PACKET_DROP_RATIO = 0.003
 
-    def __init__(self, srcPort, timeout=DEFAULT_SOCKET_TIMEOUT):
+    def __init__(self, srcPort, timeoutVal=DEFAULT_SOCKET_TIMEOUT):
         assert ("<class 'src.TCP.TCP'>" != str(self.__class__))  # Ensure TCP is not instantiated
         assert (isinstance(srcPort, int))
-        assert (isinstance(timeout, (int, float)))
+        assert (isinstance(timeoutVal, (int, float)))
+
+        random.seed()
 
         self.srcPort = srcPort
         self.connected = False
         self.dstPort = None  # Integer representing destination port number
         self.internetLayer = None
         self.dstAddress = ()
-        self.timeout = timeout
+        self.timeout = timeoutVal
         self.ackNum = None
-        self.seqNum = randint(0, pow(2, 16) - 1)
-        self.cache = []
+        self.seqNum = random.randint(0, pow(2, 16) - 1)
         self.maxDataSize = TCP.MAX_DATA_SIZE
 
     def sendPacket(self, packet, attempt=0, getAck=True):
@@ -60,13 +63,17 @@ class TCP(object):
         assert (isinstance(getAck, bool))
 
         if attempt == TCP.MAX_PACKET_SEND_ATTEMPTS:
-            raise Exception("TcpClient.sendPacket() error: server response error")
+            raise TimeoutError(
+                "TcpClient.sendPacket() error: Failed to receive ACK %u times" % TCP.MAX_PACKET_SEND_ATTEMPTS)
 
         logging.getLogger(__name__).debug(
             "TCP.sendPacket(): Attempt #" + str(attempt) + "...\n" + str(packet) + '\n------------------')
 
-        # Send the packet...
-        self.internetLayer.sendto(packet.encode(), self.dstAddress)
+        # Send the packet... maybe... if we feel like it
+        if TCP.PACKET_DROP_RATIO < random.random():
+            self.internetLayer.sendto(packet.encode(), self.dstAddress)
+        else:
+            logging.getLogger(__name__).warning("TCP.sendPacket(): Dropping a packet!!! <insert dubstep>")
 
         # And if a response was requested, wait for it
         if getAck:
@@ -78,7 +85,12 @@ class TCP(object):
                 self.internetLayer.socket.settimeout(
                     self.timeout + startTime - time())  # Update timeout to be 20 seconds after
                 logging.getLogger(__name__).debug("TCP.sendPacket(): Waiting on ACK from " + str(self.dstAddress))
-                response, recvAddress = self.internetLayer.recvfrom(TCP.MINIMUM_HEADER_SIZE)
+                try:
+                    response, recvAddress = self.internetLayer.recvfrom(TCP.MINIMUM_HEADER_SIZE)
+                except timeout:
+                    logging.getLogger(__name__).warning("TCP.sendPacket(): Receive ACK timed out at attempt #%i; "
+                                                        "Trying again" % attempt)
+                    return self.sendPacket(packet, attempt + 1, getAck)
                 response = TCP.Packet.decode(response)
                 logging.getLogger(__name__).debug("TCP.sendPacket(): Received packet from "
                                                   "%s:\n%s\n--------------------" % (recvAddress, response))
@@ -117,10 +129,15 @@ class TCP(object):
             packet.addData(data[0:dataLen])
             try:
                 self.sendPacket(packet)
-            except TimeoutError:
-                self.maxDataSize /= 2
-                self.sendData(data, packetNum)
-                # Data sent successfully; truncate remaining data packet and, if applicable, increase data packet size
+            except timeout:
+                #self.maxDataSize /= 2
+                #if self.maxDataSize < TCP.MIN_DATA_SIZE:
+                #    raise TimeoutError
+                #self.sendData(data, packetNum)
+                # TODO: Do we really need this? it's not working so hot
+                raise TimeoutError
+
+            # Data sent successfully; truncate remaining data packet and, if applicable, increase data packet size
             data = data[dataLen:]
             if TCP.MAX_DATA_SIZE >= self.maxDataSize + TCP.DATA_PACKET_STEP:
                 self.maxDataSize += TCP.DATA_PACKET_STEP
@@ -142,7 +159,7 @@ class TCP(object):
         if None != reqAddr:
             # If HTTP gave a timeout value and that time has been surpassed, raise an exception
             if 0 > timerOverride - time():
-                raise TimeoutError("HTTP request timed out")
+                raise TimeoutError()
 
             socketTimeout = min([timerOverride - time(), TCP.DEFAULT_SOCKET_TIMEOUT])
             self.internetLayer.socket.settimeout(socketTimeout)
@@ -150,12 +167,15 @@ class TCP(object):
             self.internetLayer.socket.settimeout(None)
 
         # Wait for a packet
-        packet, clientAddress = self.internetLayer.recvfrom(TCP.MAX_PACKET_SIZE)
+        try:
+            packet, clientAddress = self.internetLayer.recvfrom(TCP.MAX_PACKET_SIZE)
+        except timeout:
+            # The socket.timeout exception is dumb. I'd rather throw this one. I'm probably dumb for doing this
+            raise TimeoutError
         packet = TCP.Packet.decode(packet)
 
         # If a specific address was requested, check it
         if None != reqAddr and reqAddr != clientAddress:
-            self.cache.append(packet)
             return self.recv(reqAddr, timerOverride)
         else:
             self.ackNum = packet.header["seqNum"] + (len(packet.data) if len(packet.data) else 1)
@@ -337,8 +357,8 @@ class TCP(object):
 
 
 class TcpClient(TCP):
-    def __init__(self, srcPort, timeout=TCP.DEFAULT_SOCKET_TIMEOUT):
-        super().__init__(srcPort, timeout)
+    def __init__(self, srcPort, timeoutVal=TCP.DEFAULT_SOCKET_TIMEOUT):
+        super().__init__(srcPort, timeoutVal)
         self.internetLayer = UDPClient()
 
     def connect(self, dstIPAddress, dstPort):
@@ -382,8 +402,8 @@ class TcpClient(TCP):
 
 
 class TcpServer(TCP):
-    def __init__(self, srcPort, timeout=TCP.DEFAULT_SOCKET_TIMEOUT):
-        super().__init__(srcPort, timeout)
+    def __init__(self, srcPort, timeoutVal=TCP.DEFAULT_SOCKET_TIMEOUT):
+        super().__init__(srcPort, timeoutVal)
         self.internetLayer = UDPServer(self.srcPort)
 
     def recvConnection(self, port=None):

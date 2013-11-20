@@ -12,7 +12,7 @@
 import logging
 from src.HTTP import HttpClient
 
-#logging.basicConfig(level="DEBUG")
+logging.basicConfig(level="WARNING")
 
 fileName = "testfile.pdf"
 dstDir = "received/"

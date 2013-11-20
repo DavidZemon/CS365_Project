@@ -40,12 +40,12 @@ class HTTP(object):
         - Persistent connection
         - Almost everything else
     """
-
     PORT = 12001
     RESPONSE_CODE = {200: "OK", 202: "Payment required", 204: "No response", 301: "Moved permanently", 302: "Found",
                      400: "Bad request", 404: "Resource not found"}
     NEW_LINE = "\x0D\n"  # Carriage return followed by line feed
     DEFAULT_TIMEOUT = 20  # Timeout for blocking TCP calls (in seconds)
+    MAX_SEND_ATTEMPTS = 5
 
     def __init__(self):
         self.transportLayer = None
@@ -83,6 +83,17 @@ class HTTP(object):
             return httpPacket, httpPacket.code
         else:
             raise Exception("RAWR!!! No, but seriously, how did this happen?")
+
+    def send(self, packet, attempts=0):
+        assert (isinstance(packet, (HTTP.RequestPacket, HTTP.ResponsePacket)))
+
+        if HTTP.MAX_SEND_ATTEMPTS <= attempts:
+            raise TimeoutError
+
+        try:
+            self.transportLayer.sendData(packet.assemble())
+        except TimeoutError:
+            self.send(packet, attempts + 1)
 
     class Packet(object):
         VERBS = ["GET"]
@@ -279,12 +290,12 @@ class HttpClient(HTTP):
 
         # Send the request packet and get a response
         logging.getLogger(__name__).debug("HTTP.HTTPClient.getFile(): Sending request...")
-        self.transportLayer.sendData(packet.assemble())
+        self.send(packet)
         logging.getLogger(__name__).debug("HTTP.HTTPClient.getFile(): Request sent... waiting on response")
 
         return self.getServerResponse(ipAddress)
 
-    def getServerResponse(self, ipAddress):
+    def getServerResponse(self, ipAddress, timeout=HTTP.DEFAULT_TIMEOUT + time()):
         assert (isinstance(ipAddress, str))
 
         # Receive the HTTP packet header and first bits of data (if applicable)
@@ -300,7 +311,11 @@ class HttpClient(HTTP):
         # Receive remaining HTTP packet data
         tcpPacket = None
         while None == tcpPacket or "fin" not in tcpPacket.getFlags():
-            tcpPacket = self.transportLayer.recv((ipAddress, HTTP.PORT), HTTP.DEFAULT_TIMEOUT + time())
+            try:
+                tcpPacket = self.transportLayer.recv((ipAddress, HTTP.PORT), timeout)
+            except TimeoutError:
+                if timeout > time():
+                    return self.getServerResponse(ipAddress, timeout)
             packetNum += 1
             if "fin" not in tcpPacket.getFlags():
                 logging.getLogger(__name__).info("Received packet #" + str(packetNum))
@@ -333,7 +348,7 @@ class HttpServer(HTTP):
         else:
             raise Exception("Shouldn't this have been caught somewhere else already???")
 
-        self.transportLayer.sendData(response.assemble())
+        self.send(response)
 
         self.transportLayer.close()
 
