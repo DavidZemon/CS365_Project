@@ -31,11 +31,10 @@ class TCP(object):
     Optional section of TCP header NOT implemented!
     """
 
-    # TODO: TODO TODO TODO!!! Handle ack and sequence num overflow
-
     MAX_PACKET_SIZE = 512  # Maximum packet size in bytes, including the header
     MINIMUM_HEADER_SIZE = 20  # Bytes required to receive a simple TCP packet (header only); Default = 20
     MAX_DATA_SIZE = MAX_PACKET_SIZE - MINIMUM_HEADER_SIZE
+    DATA_PACKET_STEP = MAX_DATA_SIZE / 16
     MAX_PACKET_SEND_ATTEMPTS = 5
     DEFAULT_SOCKET_TIMEOUT = 10  # Timeout for blocking socket calls (in seconds)
 
@@ -53,6 +52,7 @@ class TCP(object):
         self.ackNum = None
         self.seqNum = randint(0, pow(2, 16) - 1)
         self.cache = []
+        self.maxDataSize = TCP.MAX_DATA_SIZE
 
     def sendPacket(self, packet, attempt=0, getAck=True):
         assert (isinstance(packet, TCP.Packet))
@@ -101,29 +101,36 @@ class TCP(object):
                 self.ackNum = response.header["seqNum"]
                 return response
 
-    def sendData(self, data):
+    def sendData(self, data, packetNum=0):
         assert (None != self.dstAddress)
         assert (isinstance(data, bytes))
 
         # Split up the data into smaller chunks if necessary
-        packetNum = 0
         while len(data):
             logging.getLogger(__name__).debug("TCP.sendData(): Sending data #" + str(packetNum))
             packet = TCP.Packet()
             packet.create(self.srcPort, self.dstAddress[1], self.seqNum, self.ackNum)
-            if len(data) >= TCP.MAX_DATA_SIZE:
-                dataLen = TCP.MAX_DATA_SIZE
+            if len(data) >= self.maxDataSize:
+                dataLen = self.maxDataSize
             else:
                 dataLen = len(data)
             packet.addData(data[0:dataLen])
+            try:
+                self.sendPacket(packet)
+            except TimeoutError:
+                self.maxDataSize /= 2
+                self.sendData(data, packetNum)
+                # Data sent successfully; truncate remaining data packet and, if applicable, increase data packet size
             data = data[dataLen:]
-            self.sendPacket(packet)
+            if TCP.MAX_DATA_SIZE >= self.maxDataSize + TCP.DATA_PACKET_STEP:
+                self.maxDataSize += TCP.DATA_PACKET_STEP
+            else:
+                self.maxDataSize = TCP.MAX_DATA_SIZE
 
     def recv(self, reqAddr=None, timerOverride=None):
         """
 
         """
-        # TODO: Keep track of whether a timeout event is due to HTTP timeout or TCP timeout
 
         if None != reqAddr:
             assert (isinstance(reqAddr, tuple))
@@ -135,7 +142,6 @@ class TCP(object):
         if None != reqAddr:
             # If HTTP gave a timeout value and that time has been surpassed, raise an exception
             if 0 > timerOverride - time():
-                # TODO: Implement flow control instead of being a whiny bitch
                 raise TimeoutError("HTTP request timed out")
 
             socketTimeout = min([timerOverride - time(), TCP.DEFAULT_SOCKET_TIMEOUT])
