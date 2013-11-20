@@ -9,9 +9,22 @@
 @description:
 """
 
-import logging
+from signal import signal, SIGINT
+import sys
+
 from src.HTTP import HttpServer
 
+
+#noinspection PyUnusedLocal
+def signal_handler(sig, frame):
+    if SIGINT == sig:
+        server.transportLayer.close()
+        sys.exit(0)
+    else:
+        raise Exception("Whoops... shouldn't have caught that signal!")
+
+
+signal(SIGINT, signal_handler)
 #logging.basicConfig(level="DEBUG")
 
 server = HttpServer("127.0.0.1")
