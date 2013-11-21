@@ -11,7 +11,7 @@
 import logging
 from os import path
 from time import time, strftime, gmtime
-from src.TCP import TcpClient, TCP, TcpServer, AddressFilterError
+from src.TCP import TCP, TcpClient, TcpServer, AddressFilterError
 
 
 class HTTPError(Exception):
@@ -64,9 +64,9 @@ class HTTP(object):
         while None == respPacket:
             if None == ipAddress:
                 try:
-                    respPacket = self.transportLayer.recv(None)  # TODO: Catch the Timeout exception
+                    respPacket = self.transportLayer.recv(None)
                 except AddressFilterError:
-                    continue
+                    continue  # If we receive from the wrong address while accepting any address... that's a problem
             else:
                 # TODO: Catch the timeout exception
                 respPacket = self.transportLayer.recv((ipAddress, HTTP.PORT), timerOverride=timeout + time())
@@ -295,7 +295,7 @@ class HttpClient(HTTP):
 
         return self.getServerResponse(ipAddress)
 
-    def getServerResponse(self, ipAddress, timeout=HTTP.DEFAULT_TIMEOUT + time()):
+    def getServerResponse(self, ipAddress, timeout=HTTP.DEFAULT_TIMEOUT, startTime=time()):
         assert (isinstance(ipAddress, str))
 
         # Receive the HTTP packet header and first bits of data (if applicable)
@@ -312,10 +312,12 @@ class HttpClient(HTTP):
         tcpPacket = None
         while None == tcpPacket or "fin" not in tcpPacket.getFlags():
             try:
-                tcpPacket = self.transportLayer.recv((ipAddress, HTTP.PORT), timeout)
+                tcpPacket = self.transportLayer.recv((ipAddress, HTTP.PORT), timeout + time())
             except TimeoutError:
                 if timeout > time():
-                    return self.getServerResponse(ipAddress, timeout)
+                    return self.getServerResponse(ipAddress, timeout - (time() - startTime), time())
+                else:
+                    raise
             packetNum += 1
             if "fin" not in tcpPacket.getFlags():
                 logging.getLogger(__name__).info("Received packet #" + str(packetNum))

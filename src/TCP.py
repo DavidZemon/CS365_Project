@@ -37,8 +37,8 @@ class TCP(object):
     MAX_DATA_SIZE = MAX_PACKET_SIZE - MINIMUM_HEADER_SIZE
     DATA_PACKET_STEP = MAX_DATA_SIZE / 16
     MAX_PACKET_SEND_ATTEMPTS = 3
-    DEFAULT_SOCKET_TIMEOUT = 1  # Timeout for blocking socket calls (in seconds)
-    PACKET_DROP_RATIO = 0.003
+    DEFAULT_SOCKET_TIMEOUT = .2  # Timeout for blocking socket calls (in seconds)
+    PACKET_DROP_RATIO = 0.01
 
     def __init__(self, srcPort, timeoutVal=DEFAULT_SOCKET_TIMEOUT):
         assert ("<class 'src.TCP.TCP'>" != str(self.__class__))  # Ensure TCP is not instantiated
@@ -56,12 +56,15 @@ class TCP(object):
         self.ackNum = None
         self.seqNum = random.randint(0, pow(2, 16) - 1)
         self.maxDataSize = TCP.MAX_DATA_SIZE
+        self.lastAck = TCP.Packet()
+        self.recvBuffer = []
 
     def sendPacket(self, packet, attempt=0, getAck=True):
         assert (isinstance(packet, TCP.Packet))
         assert (isinstance(attempt, int))
         assert (isinstance(getAck, bool))
 
+        # If we tried too many times already, just give up
         if attempt == TCP.MAX_PACKET_SEND_ATTEMPTS:
             raise TimeoutError(
                 "TcpClient.sendPacket() error: Failed to receive ACK %u times" % TCP.MAX_PACKET_SEND_ATTEMPTS)
@@ -157,12 +160,11 @@ class TCP(object):
 
         # Set the timeout if necessary
         if None != reqAddr:
-            # If HTTP gave a timeout value and that time has been surpassed, raise an exception
+            # If application layer gave a timeout value and that time has been surpassed, raise an exception
             if 0 > timerOverride - time():
                 raise TimeoutError()
 
-            socketTimeout = min([timerOverride - time(), TCP.DEFAULT_SOCKET_TIMEOUT])
-            self.internetLayer.socket.settimeout(socketTimeout)
+            self.internetLayer.socket.settimeout(timerOverride - time())
         else:
             self.internetLayer.socket.settimeout(None)
 
@@ -175,17 +177,24 @@ class TCP(object):
         packet = TCP.Packet.decode(packet)
 
         # If a specific address was requested, check it
-        if None != reqAddr and reqAddr != clientAddress:
+        if reqAddr not in [None, clientAddress]:
             return self.recv(reqAddr, timerOverride)
         else:
-            self.ackNum = packet.header["seqNum"] + (len(packet.data) if len(packet.data) else 1)
-            if pow(2, 16) - 1 < self.ackNum:  # Check for overflow
-                self.ackNum -= pow(2, 16)
-            ackPacket = TCP.Packet()
-            ackPacket.create(self.srcPort, self.dstPort, self.seqNum, self.ackNum)
-            ackPacket.setFlags(["ack"])
-            self.sendPacket(ackPacket, getAck=False)
-            return packet
+            # Check if the received packet was the correct packet in line
+            if self.ackNum != packet.header["seqNum"]:
+                # Incorrect packet, save this one in a buffer and resend the old ack
+                self.sendPacket(self.lastAck, getAck=False)
+                return self.recv(reqAddr, timerOverride)
+            else:
+                self.ackNum = packet.header["seqNum"] + (len(packet.data) if len(packet.data) else 1)
+                if pow(2, 16) - 1 < self.ackNum:  # Check for overflow
+                    self.ackNum -= pow(2, 16)
+                ackPacket = TCP.Packet()
+                ackPacket.create(self.srcPort, self.dstPort, self.seqNum, self.ackNum)
+                ackPacket.setFlags(["ack"])
+                self.lastAck = ackPacket
+                self.sendPacket(ackPacket, getAck=False)
+                return packet
 
     def getExpectedAckNum(self, data):
         assert (isinstance(data, bytes))
