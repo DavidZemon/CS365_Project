@@ -42,22 +42,26 @@ class ReqHandler(BaseHTTPRequestHandler):
             logging.getLogger(__name__).debug("ProxyServer: File not found, requesting it from origin server.")
             # file not found, so need to request it from the origin server
             file, contentTypeStr = self.getFileFromOrigin(self.path[1:], self.hostStr)
-            # Got file, now send it to the client
-            self.send_response(200)
-            self.send_header('Content-type', contentTypeStr)
-            self.send_header('Content-Length', len(file))
-            self.end_headers()
-            self.wfile.write(file)
+            if None == file and None == contentTypeStr:
+                self.send_response(404, HTTP.RESPONSE_CODE[404])
+                return
+            else:
+                # Got file, now send it to the client
+                self.send_response(200)
+                self.send_header('Content-type', contentTypeStr)
+                self.send_header('Content-Length', len(file))
+                self.end_headers()
+                self.wfile.write(file)
 
     def getFileFromOrigin(self, filename, hostStr):
-        rawContent = None
-        t = None
         client = HttpClient(hostStr)
         try:
             rawContent, t = client.getFile(self.originServerIP, filename)
+            with open(filename, 'wb') as f:
+                f.write(rawContent)
         except HTTPError as e:
             if isinstance(e, HTTP404):
-                self.send_response(404, HTTP.RESPONSE_CODE[404])
+                return None, None
             else:
                 raise e
 

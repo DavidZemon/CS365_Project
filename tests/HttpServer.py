@@ -26,7 +26,7 @@ def signal_handler(sig, frame):
 
 
 signal(SIGINT, signal_handler)
-logging.basicConfig(level="WARNING")
+logging.basicConfig(level="INFO")
 
 server = HttpServer("127.0.0.1")
 while 1:

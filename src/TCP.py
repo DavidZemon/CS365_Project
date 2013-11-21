@@ -37,8 +37,8 @@ class TCP(object):
     MAX_DATA_SIZE = MAX_PACKET_SIZE - MINIMUM_HEADER_SIZE
     DATA_PACKET_STEP = MAX_DATA_SIZE / 16
     MAX_PACKET_SEND_ATTEMPTS = 3
-    DEFAULT_SOCKET_TIMEOUT = .2  # Timeout for blocking socket calls (in seconds)
-    PACKET_DROP_RATIO = 0.01
+    DEFAULT_SOCKET_TIMEOUT = 1  # Timeout for blocking socket calls (in seconds)
+    PACKET_DROP_RATIO = 0.003
 
     def __init__(self, srcPort, timeoutVal=DEFAULT_SOCKET_TIMEOUT):
         assert ("<class 'src.TCP.TCP'>" != str(self.__class__))  # Ensure TCP is not instantiated
@@ -66,8 +66,8 @@ class TCP(object):
 
         # If we tried too many times already, just give up
         if attempt == TCP.MAX_PACKET_SEND_ATTEMPTS:
-            raise TimeoutError(
-                "TcpClient.sendPacket() error: Failed to receive ACK %u times" % TCP.MAX_PACKET_SEND_ATTEMPTS)
+            s = "TCP.sendPacket() error: Failed to receive ACK %i times" % TCP.MAX_PACKET_SEND_ATTEMPTS
+            raise TimeoutError(s)
 
         logging.getLogger(__name__).debug(
             "TCP.sendPacket(): Attempt #" + str(attempt) + "...\n" + str(packet) + '\n------------------')
@@ -84,7 +84,9 @@ class TCP(object):
             recvAddress = None
             response = None
             startTime = time()  # Get current system time
-            while recvAddress != self.dstAddress:  # Try and try again until we receive from the correct address
+
+            # Try and try again until we receive from the correct address (skip if address is correct)
+            while recvAddress != self.dstAddress:
                 self.internetLayer.socket.settimeout(
                     self.timeout + startTime - time())  # Update timeout to be 20 seconds after
                 logging.getLogger(__name__).debug("TCP.sendPacket(): Waiting on ACK from " + str(self.dstAddress))
@@ -100,7 +102,6 @@ class TCP(object):
 
             # Check for acknowledgement
             if "ack" not in response.getFlags():
-                # TODO: Stop being a whiny bitch
                 logging.getLogger(__name__).warning(
                     "TCP.sendPacket(): response did not ACK...\n%s\n-------------------" % response)
                 raise Exception("TcpClient.sendPacket() error: response did not ACK")
@@ -180,8 +181,11 @@ class TCP(object):
         if reqAddr not in [None, clientAddress]:
             return self.recv(reqAddr, timerOverride)
         else:
-            # Check if the received packet was the correct packet in line
+            if "fin" in packet.getFlags():
+                print("Received FIN packet!!!!11!!1!\n")
+                # Check if the received packet was the correct packet in line
             if self.ackNum != packet.header["seqNum"]:
+                logging.getLogger(__name__).info("Received packet out of order; Resending previous ACK")
                 # Incorrect packet, save this one in a buffer and resend the old ack
                 self.sendPacket(self.lastAck, getAck=False)
                 return self.recv(reqAddr, timerOverride)
@@ -193,6 +197,8 @@ class TCP(object):
                 ackPacket.create(self.srcPort, self.dstPort, self.seqNum, self.ackNum)
                 ackPacket.setFlags(["ack"])
                 self.lastAck = ackPacket
+                if "fin" in packet.getFlags():
+                    print("Sending ACK in response to FIN!!!!!!\n")
                 self.sendPacket(ackPacket, getAck=False)
                 return packet
 
@@ -213,7 +219,7 @@ class TCP(object):
         packet = TCP.Packet()
         packet.create(self.srcPort, self.dstAddress[1], self.seqNum, self.ackNum)
         packet.setFlags(["fin"])
-        self.sendPacket(packet, getAck=True)
+        self.sendPacket(packet, getAck=False)  # TODO: getAck needs to be set true!!!
 
         self.internetLayer.close()
         self.internetLayer = None

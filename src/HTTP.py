@@ -22,7 +22,7 @@ class HTTPError(Exception):
         return repr(self.value)
 
 
-class HTTP404(Exception):
+class HTTP404(HTTPError):
     def __init__(self, value):
         self.value = value
 
@@ -68,11 +68,9 @@ class HTTP(object):
                 except AddressFilterError:
                     continue  # If we receive from the wrong address while accepting any address... that's a problem
             else:
-                # TODO: Catch the timeout exception
                 respPacket = self.transportLayer.recv((ipAddress, HTTP.PORT), timerOverride=timeout + time())
             logging.getLogger(__name__).debug("HTTP.recvPacket(): Received good TCP packet! :)")
             httpPacket += respPacket.getData()
-            # TODO: Should we check some TCP flags and do things accordingly?
 
         # Decode the HTTP packet
         httpPacket = packetType.parse(httpPacket)
@@ -302,8 +300,7 @@ class HttpClient(HTTP):
         response, code = self.recvPacket(HTTP.ResponsePacket, ipAddress)
 
         if HTTP.RESPONSE_CODE[code] != "OK":
-            # TODO: Handle me properly!
-            raise Exception("HTTP response error " + str(code) + ":\n" + response)
+            raise HTTP404("HTTP response error " + str(code) + ":\n" + str(response))
 
         logging.getLogger(__name__).info("Received first data packet...")
         packetNum = 1
@@ -362,22 +359,21 @@ class HttpServer(HTTP):
         response.hostStr = self.hostStr
         if path.exists(packet.arg):
             # File exists: Set the packet accordingly and add the file contents
-            response.create(200, {})  # TODO: Add options
-            f = open(packet.arg, 'rb')
-            fileExt = packet.arg.split('.')[1]
+            response.create(200, {})
+            with open(packet.arg, 'rb') as f:
+                fileExt = packet.arg.split('.')[1]
 
-            # Set file type
-            try:
-                response.options["Content-Type:"] = HTTP.Packet.CONTENT_TYPE[fileExt]
-            except KeyError:
-                response.options["Content-Type:"] = HTTP.Packet.UNKNOWN_CONTENT
+                # Set file type
+                try:
+                    response.options["Content-Type:"] = HTTP.Packet.CONTENT_TYPE[fileExt]
+                except KeyError:
+                    response.options["Content-Type:"] = HTTP.Packet.UNKNOWN_CONTENT
 
-            # Set the standard response options
-            self.addBasicResponseOptions(response, 200)
+                # Set the standard response options
+                self.addBasicResponseOptions(response, 200)
 
-            # Add the file contents
-            response.addData(f.read())
-            f.close()
+                # Add the file contents
+                response.addData(f.read())
         else:
             # File didn't exists: Set the packet with an error code
             response.create(404, None)
