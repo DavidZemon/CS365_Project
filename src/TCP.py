@@ -219,7 +219,7 @@ class TCP(object):
         packet = TCP.Packet()
         packet.create(self.srcPort, self.dstAddress[1], self.seqNum, self.ackNum)
         packet.setFlags(["fin"])
-        self.sendPacket(packet, getAck=True)  # TODO: getAck needs to be set true!!!
+        self.sendPacket(packet, getAck=True)
 
         self.internetLayer.close()
         self.internetLayer = None
