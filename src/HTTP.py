@@ -299,9 +299,6 @@ class HttpClient(HTTP):
         # Receive the HTTP packet header and first bits of data (if applicable)
         response, code = self.recvPacket(HTTP.ResponsePacket, ipAddress)
 
-        if HTTP.RESPONSE_CODE[code] != "OK":
-            raise HTTP404("HTTP response error " + str(code) + ":\n" + str(response))
-
         logging.getLogger(__name__).info("Received first data packet...")
         packetNum = 1
 
@@ -324,6 +321,8 @@ class HttpClient(HTTP):
         logging.getLogger(__name__).debug("HTTP.recvPacket(): Received complete HTTP packet! :D")
 
         # Ensure the response was positive (contains file)
+        if HTTP.RESPONSE_CODE[code] != "OK":
+            raise HTTP404("HTTP response error " + str(code) + ":\n" + str(response))
 
         return response.data, response.options["Content-Type:"]
 

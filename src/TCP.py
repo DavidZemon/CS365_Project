@@ -182,7 +182,7 @@ class TCP(object):
             return self.recv(reqAddr, timerOverride)
         else:
             if "fin" in packet.getFlags():
-                print("Received FIN packet!!!!11!!1!\n")
+                logging.getLogger(__name__).debug("Received FIN packet!!!!!!!")
                 # Check if the received packet was the correct packet in line
             if self.ackNum != packet.header["seqNum"]:
                 logging.getLogger(__name__).info("Received packet out of order; Resending previous ACK")
@@ -198,7 +198,7 @@ class TCP(object):
                 ackPacket.setFlags(["ack"])
                 self.lastAck = ackPacket
                 if "fin" in packet.getFlags():
-                    print("Sending ACK in response to FIN!!!!!!\n")
+                    logging.getLogger(__name__).debug("Sending ACK in response to FIN!!!!!!")
                 self.sendPacket(ackPacket, getAck=False)
                 return packet
 
@@ -219,7 +219,7 @@ class TCP(object):
         packet = TCP.Packet()
         packet.create(self.srcPort, self.dstAddress[1], self.seqNum, self.ackNum)
         packet.setFlags(["fin"])
-        self.sendPacket(packet, getAck=False)  # TODO: getAck needs to be set true!!!
+        self.sendPacket(packet, getAck=True)  # TODO: getAck needs to be set true!!!
 
         self.internetLayer.close()
         self.internetLayer = None

@@ -1,4 +1,4 @@
-#/usr/bin/python
+#/usr/bin/python3
 # File:    HttpServer.py
 # Author:  David Zemon
 # Project: Project1
@@ -26,7 +26,7 @@ def signal_handler(sig, frame):
 
 
 signal(SIGINT, signal_handler)
-logging.basicConfig(level="INFO")
+logging.basicConfig(level="DEBUG")
 
 server = HttpServer("127.0.0.1")
 while 1:
