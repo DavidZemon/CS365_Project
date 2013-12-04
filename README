@@ -1,0 +1,106 @@
+###############################################################################
+# CS 365 Project 1
+# Authors
+#   David Zemon
+#   Ethan Wells
+###############################################################################
+
+###############################################################################
+# Runtime Instructions
+###############################################################################
+1) In terminal #1, enter the “<project root>/tests/” directory
+  a) Run HttpServer.py
+2) In terminal #2, enter “<project root>/proxyServ”
+3) Run ../tests/ProxyServer-Server.py
+4) Using a browser, enter “127.0.0.1:12002:<path/to/file>”
+*Note: To run any individual file, start a terminal and enter “python3
+<path/to/file>” *
+
+###############################################################################
+# Description of Code
+###############################################################################
+This program will allow a web browser to request a file from an HTTP Server (on
+ port 12002) and the server will request the file from the proxy server. If the
+ proxy server does not have it, the proxy server will issue a request via
+ HttpClient to get the file from the origin server. Once the file has been
+ retrieved, it will cache it, and forward it to the web browser where it can be
+ displayed to the end user. This communication (between the proxy server and
+ origin server) is built on a custom implemented TCP, and allows for flow control
+ with reliable sending, including resending dropped packets with either a timeout
+ or a triple acknowledgement of the same packet.
+
+###############################################################################
+# Test Files
+###############################################################################
+
+# ProxyServer-Server.py
+The proxy server responds to the web browser’s requests for files (GET requests)
+ by checking if the files are hosted in its cache. If the files are present in
+ the cache, the proxy server will respond to the web browser with the file, and
+ it will be displayed on the screen. If the file is not hosted in the cache,
+ the proxy server will turn and send a GET request to the HTTP server, which is
+ running on the origin server. These communications between the proxy server and
+ the HTTP server are using our developed TCP. If the HTTP server has the file,
+ it will correctly send it to the proxy server who will then respond to the
+ client, add it to its cache, and the file will be displayed on the screen. If
+ the HTTP server does not have the file, it will send an HTTP 404 error, which
+ will be correctly relayed to the client.
+
+# HTTPServer.py
+HTTPServer.py runs an HTTP server that responds to the GET requests that will be
+ submitted through the HTTP client that is run on the proxy server. Essentially,
+ this program acts as an easy method of requesting files from the origin server
+ to the proxy server that uses our TCP implementation. When a request is received,
+ the server will determine if the file is being hosted/is accessible. If it is
+ not accessible it will respond with an HTTP 404 message. If it is accessible, it
+ will send the data over our TCP to the HTTP client running on the proxy server.
+ Since this is running our TCP, it will have all the features of reliable data
+ transfer, such as resending dropped packets and flow control.
+
+###############################################################################
+# Class Hierarchy
+###############################################################################
+
+# Http
+The HTTP class within Http.py is parent class of both HttpServer and HttpClient.
+ Shared members of both classes such as HttpPacket functionality and send/receive
+ functions can be accessed through this class. The HttpPacket class takes care of
+ parsing all aspects of the packet and is able to easily return requested info.
+
+# Http.Client
+HttpClient is a simple combination of two method calls on top of its Http parent
+ class. HttpClient.getFile() can be used as a public method to request any file
+ from any IP address. HttpClient.getServerResponse() is then used within it to
+ retrieve the response and parse the packet - returning either the file data or
+ an error code.
+
+# Http.Server
+HttpServer has a few methods that help it in its task of servicing HTTP clients.
+ At first, the recv() function uses our TCP layer to wait for a packet. Then,
+ when the server has received a packet, it uses the HttpServer.serviceGet()
+ method to respond to the GET with the appropriate data, and if it doesn’t exist,
+ it responds with HTTP 404. The method HttpServer.addBasicResponseOptions()
+ easily allows us to add the required packet information such as HTTP version
+ and response code in a streamlined manner.
+
+# TCP
+The TCP class contains all of the code and functions necessary to send data
+ packets (with reliable sending and flow control) over a socket to/from a server
+ and client. Some of the methods contained in this class include TCP.sendPacket(),
+ which sends a packet and depending on a passed argument, will wait for a
+ correctly numbered acknowledgement. It will also take care of resending the
+ packet if it is dropped or if a triple ack is received. It also contains shared
+ classes such as Packet (TCP level packet) that are shared between the TCP client
+ and server.
+
+# TCP.Client
+TCP.Client contains the base class of TCP, but also includes a connect() method
+ that will correctly handle the 3-way handshake that involves creating a connection
+ between a TCP server and client. It also handles creating the UDP connection
+ that is used to send packets.
+
+# TCP.Server
+TCP.Server is very similar to TCP.Client, however instead of connect(), it has a
+ method called recvConnection() that waits for a client to send a SYN packet,
+ indicating the start of a TCP connection, and will then respond appropriately to
+ set up the connection.
